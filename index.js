@@ -26,7 +26,7 @@ const client = new MongoClient(process.env.MONGO_URI, {
 });
 
 let devicesCollection;
-
+let cartCollection;
 // =======================
 // Connect Database
 // =======================
@@ -43,6 +43,7 @@ async function connectDB() {
       db.collection("devices");
 
     console.log("✅ Database Ready");
+    cartCollection = db.collection("cart");
   } catch (error) {
     console.error(error);
     process.exit(1);
@@ -81,6 +82,172 @@ app.get("/devices", async (req, res) => {
   }
 });
 
+
+app.get("/devices/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const device = await devicesCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!device) {
+      return res.status(404).send({
+        message: "Device not found",
+      });
+    }
+
+    res.send(device);
+  } catch (error) {
+    console.log(error);
+
+    res.status(500).send({
+      message: "Failed to load device",
+    });
+  }
+});
+
+//add to cart
+app.post("/cart", async (req, res) => {
+  try {
+    const { userEmail, deviceId, quantity } = req.body;
+
+    if (!userEmail || !deviceId) {
+      return res.status(400).send({
+        message: "Missing required fields.",
+      });
+    }
+
+    const existingItem =
+      await cartCollection.findOne({
+        userEmail,
+        deviceId,
+      });
+
+    if (existingItem) {
+      await cartCollection.updateOne(
+        { _id: existingItem._id },
+        {
+          $inc: {
+            quantity: quantity || 1,
+          },
+        }
+      );
+
+      return res.send({
+        success: true,
+        message: "Cart updated successfully.",
+      });
+    }
+
+    const result =
+      await cartCollection.insertOne({
+        userEmail,
+        deviceId,
+        quantity: quantity || 1,
+        createdAt: new Date(),
+      });
+
+    res.send({
+      success: true,
+      insertedId: result.insertedId,
+      message: "Added to cart.",
+    });
+  } catch (error) {
+    console.log(error);
+
+    res.status(500).send({
+      message: "Failed to add to cart.",
+    });
+  }
+});
+
+//get cart
+app.get("/cart", async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).send({
+        message: "Email is required.",
+      });
+    }
+
+    const cartItems =
+      await cartCollection
+        .find({
+          userEmail: email,
+        })
+        .toArray();
+
+    const result = await Promise.all(
+      cartItems.map(async (item) => {
+        const device =
+          await devicesCollection.findOne({
+            _id: new ObjectId(item.deviceId),
+          });
+
+        return {
+          ...item,
+          device,
+        };
+      })
+    );
+
+    res.send(result);
+  } catch (error) {
+    console.log(error);
+
+    res.status(500).send({
+      message: "Failed to load cart.",
+    });
+  }
+});
+
+//delete cart
+app.delete("/cart/:id", async (req, res) => {
+  try {
+    const result =
+      await cartCollection.deleteOne({
+        _id: new ObjectId(req.params.id),
+      });
+
+    res.send(result);
+  } catch (error) {
+    console.log(error);
+
+    res.status(500).send({
+      message: "Failed to delete item.",
+    });
+  }
+});
+
+//update quantity
+app.patch("/cart/:id", async (req, res) => {
+  try {
+    const { quantity } = req.body;
+
+    const result =
+      await cartCollection.updateOne(
+        {
+          _id: new ObjectId(req.params.id),
+        },
+        {
+          $set: {
+            quantity,
+          },
+        }
+      );
+
+    res.send(result);
+  } catch (error) {
+    console.log(error);
+
+    res.status(500).send({
+      message: "Failed to update quantity.",
+    });
+  }
+});
 // =======================
 // Server
 // =======================
